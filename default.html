@@ -1,0 +1,593 @@
+﻿<!DOCTYPE html
+    PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html dir="ltr" xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+        integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous" />
+
+
+
+    <!-- #BeginEditable "doctitle" -->
+
+
+    </script>
+    <title>VESSEL COURSE OPTIMIZATION</title>
+    <style type="text/css">
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css"
+        integrity="sha512-xwE/Az9zrjBIphAcBb3F6JVqxf46+CDLwfLMHloNu6KEQCAWi6HcDUbeOfBIptF7tcCzusKFjFw2yuvEpDL9wQ=="
+        crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"
+        integrity="sha512-gZwIG9x3wUXg2hdXF6+rVkLF/0Vi9U8D2Ntg4Ga5I5BZpVkVxlJWbSQtXPSiUTtC0TjtGOmxa1AJPuV0CPthew=="
+        crossorigin=""></script>
+    <!-- #EndEditable -->
+    <link href="style1.css" media="screen" rel="stylesheet" title="CSS" type="text/css" />
+</head>
+
+<body>
+    <!-- Begin Container -->
+    <div id="container">
+        <!-- Begin Masthead -->
+    </div>
+    <!-- #BeginEditable "sidebar" -->
+    <div id="mapid">
+        <script src="lib/leaflet/curve.js"></script>
+        <script src="lib/leaflet/astar.js"></script>
+        <script src="lib/leaflet/route.js"></script>
+        <script type="text/javascript">
+            var mymap = L.map('mapid').setView([37.629382, 25.716784], 7);
+            L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoibWFwYm94IiwiYSI6ImNpejY4NXVycTA2emYycXBndHRqcmZ3N3gifQ.rJcFIG214AriISLbB6B5aw', {
+                maxZoom: 18,
+                attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, ' +
+                    '<a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, ' +
+                    'Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
+                id: 'mapbox.streets'
+            }).addTo(mymap);
+            function searchStartPort() {
+                var xhr = new XMLHttpRequest();
+                var searchInput = document.getElementById("myInput").value;
+                xhr.open("GET", 'http://localhost:3000/api/ports/' + searchInput, true);
+                //Δεν χρειάζεται xhr.readyState check γιατί το  xhr.onload λειτουργεί μόνο αν το  xhr.readyState == 4: request finished and response is ready
+                xhr.send();
+                xhr.onload = function () {
+                    if (this.status == 200) {
+                        var ports = JSON.parse(this.responseText);
+                        var coordinates = [];
+                        for (var i = 1; i < ports.length; i++) {
+                            document.getElementById("StartportValue" + i).value = ports[i].properties.country + ',' + ports[i].properties.portname;
+                        }
+                    }
+                };
+            }
+            function searchEndPort() {
+                var xhr = new XMLHttpRequest();
+                var searchInput = document.getElementById("myInputB").value;
+                xhr.open("GET", 'http://localhost:3000/api/ports/' + searchInput, true);
+                xhr.send();
+                xhr.onload = function () {
+                    if (this.status == 200) {
+                        var ports = JSON.parse(this.responseText);
+                        var coordinates = [];
+                        for (var i = 1; i < ports.length; i++) {
+                            document.getElementById("EndportValue" + i).value = ports[i].properties.country + ',' + ports[i].properties.portname;
+                            coordinates = ports[i].geometry.coordinates;
+                        }
+                    }
+                };
+            }
+            function drawPolylines() {
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", 'http://localhost:3000/api/adsa/', true);
+                xhr.send();
+                xhr.onload = function () {
+                    if (this.status == 200) {
+                        var adsa = JSON.parse(this.responseText);
+
+                        for (var i = 0; i < adsa.length; i++) {
+                            var coordinates = [];
+                            for (var j = 0; j < adsa[i].polygon.length; j++) {
+                                var realcoord = [adsa[i].polygon[j][1], adsa[i].polygon[j][0]]
+                                coordinates.push(realcoord);
+                            }
+                            drawpath = L.polyline(coordinates);
+                            drawpath.addTo(mymap);
+                        }
+                    }
+                };
+            }
+            /* Δήλωση μεταβλητών */
+            var Scoordinates = [];
+            var Sreal_coord = [];
+            var Ecoordinates = [];
+            var real_coord = [];
+            var point = [];
+            var startMarker = {};
+            var startlatlng;
+            var startPort;
+            var closestStartPointName;
+            var drawpathStart;
+            var connectStart;
+            var newdist;
+            function putStartPin() {
+                mymap.removeLayer(startMarker);
+                var value;
+                newdist = 100000;
+                value = document.getElementById("myInput").value;
+                startPort = value.split(',')[1];  /* Επιλογή μόνο του λιμανιού απο το ζευγάρι χώρα,λιμάνι */
+                /* Κλήση στη βάση με πληροφορίες για τα λιμάνια */
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", 'http://localhost:3000/api/ports/' + startPort, true);
+                xhr.send();
+                xhr.onload = function () {
+                    if (this.status == 200) {
+                        var ports = JSON.parse(this.responseText);
+                        /* Κλήση στη βάση με πληροφορίες για τα πολύγωνα */
+                        var xhr2 = new XMLHttpRequest();
+                        xhr2.open("GET", 'http://localhost:3000/api/polygons/', true);
+                        xhr2.send();
+                        xhr2.onload = function () {
+                            if (this.status == 200) {
+                                var points = JSON.parse(this.responseText)
+                                if (ports.length > 0) {
+                                    Scoordinates = ports[0].geometry.coordinates;
+                                    Sreal_coord = [Scoordinates[1], Scoordinates[0]];
+                                    if (startMarker != 'undefined') {
+                                        mymap.removeLayer(startMarker);
+                                    }
+                                    /* Εύρεση κοντινότερου σημείου αρχής η τέλους πολύγωνων απο το λιμάνι */
+                                    for (i = 0; i < points.length; i++) {
+                                        var distance = findDistance(Scoordinates[1], Scoordinates[0], points[i].Coordinates.End.x, points[i].Coordinates.End.y, "N")
+                                        if (distance < 162 && distance < newdist) {
+                                            newdist = distance;
+                                            closestPoint = [points[i].Coordinates.End.x, points[i].Coordinates.End.y]
+                                            closestStartPointName = points[i].PolygonNo + "end";
+                                        }
+                                    }
+                                    /* Τοποθέτηση πινέζας και εστίαση στο λιμάνι αφετηρίας */
+                                    connectStart = [(Sreal_coord), (closestPoint)];
+                                    startMarker = L.marker(Sreal_coord).addTo(mymap);
+                                    //mymap.fitBounds([closestPoint, closestEndPoint]);
+                                    //mymap.setZoom(8);
+                                }
+                            }
+                        };
+                    }
+                };
+            }
+            var endPort;
+            var endMarker = {};
+            var closestEndPoint;
+            var closestEndPointName;
+            var drawpathEnd;
+            var connectEnd;
+            var newEnddist;
+            function putEndPin() {
+                mymap.removeLayer(endMarker);
+                var value;
+                value = document.getElementById("myInputB").value;
+                endPort = value.split(',')[1];
+                newEnddist = 100000;
+                /* Κλήση στη βάση με πληροφορίες για τα λιμάνια */
+                var xhrend = new XMLHttpRequest();
+                xhrend.open("GET", 'http://localhost:3000/api/ports/' + endPort, true);
+                //Δεν χρειάζεται xhr.readyState check γιατί το  xhr.onload λειτουργεί μόνο αν το  xhr.readyState == 4: request finished and response is ready
+                xhrend.send();
+                xhrend.onload = function () {
+                    if (this.status == 200) {
+                        var ports = JSON.parse(this.responseText);
+                        /* Κλήση στη βάση με πληροφορίες για τα πολύγωνα */
+                        var xhr2 = new XMLHttpRequest();
+                        xhr2.open("GET", 'http://localhost:3000/api/polygons/', true);
+                        xhr2.send();
+                        xhr2.onload = function () {
+                            if (this.status == 200) {
+                                var points = JSON.parse(this.responseText)
+                                if (ports.length > 0) {
+                                    Ecoordinates = ports[0].geometry.coordinates;
+                                    if (endMarker != 'undefined') {
+                                        mymap.removeLayer(endMarker);
+                                    }
+                                    /* Εύρεση κοντινότερου σημείου αρχής η τέλους πολύγωνων απο το λιμάνι */
+                                    for (i = 0; i < points.length; i++) {
+                                        var distance = findDistance(Ecoordinates[1], Ecoordinates[0], points[i].Coordinates.Start.x, points[i].Coordinates.Start.y, "N")
+                                        if (distance < 162 && distance < newEnddist) {
+                                            newEnddist = distance;
+                                            closestEndPoint = [points[i].Coordinates.Start.x, points[i].Coordinates.Start.y]
+                                            closestEndPointName = points[i].PolygonNo + "start";
+                                        }
+                                    }
+                                    /* Τοποθέτηση πινέζας και εστίαση μεταξύ του λιμανιού αφετηρίας και λιμανιού προορισμού */
+                                    var Ereal_coord = [Ecoordinates[1], Ecoordinates[0]];
+                                    connectEnd = [(Ereal_coord), (closestEndPoint)]
+                                    endMarker = L.marker(Ereal_coord).addTo(mymap);
+                                    //mymap.fitBounds([closestPoint, closestEndPoint]);
+                                    //mymap.setZoom(8);
+                                }
+                            }
+                        };
+                    }
+                }
+            }
+            var total_dist;
+            var average_speed;
+            var total_time;
+            function findNewShortestPath() {
+                /* Κλήση της εκάστοτε βάσης με τα κατάλληλα δεδομένα ώστε να δημιουργηθεί ο γράφος 
+                    Οι βάσεις που μπορούν να χρησιμοποιηθούν είναι οι Distances10Nm, Distances10NmSpd, Distances70Nm, Distances70NmSpd */
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", 'http://localhost:3000/api/Distances70Nm/', true);
+                xhr.send();
+                xhr.onload = function () {
+                    if (this.status == 200) {
+                        var pointDistances = JSON.parse(this.responseText);
+                        /* Δημιουργία γράφου */
+                        var g = new Graph();
+                        for (i = 0; i < pointDistances.length; i++) {
+                            g.addVertex(pointDistances[i].PointName, pointDistances[i].distances)
+                        };
+                        /* Εκτέλεση αλγόριθμου shortest path */
+                        // Αποτύπωση διαδρομής σε log, αντιστρέφοντας το array και προσθέτοντας το πρώτο node
+                        var path = g.shortestPath(closestStartPointName, closestEndPointName).concat([closestStartPointName]).reverse()
+                        var xhr3 = new XMLHttpRequest();
+                        xhr3.open("GET", 'http://localhost:3000/api/polygons/', true);
+                        xhr3.send();
+                        xhr3.onload = function () {
+                            if (this.status == 200) {
+                                var polygonCoords = JSON.parse(this.responseText);
+                                var coordArray = [];
+                                var speed = 0;
+                                total_dist = 0;
+                                for (var p = 0; p < path.length; p++) {
+                                    for (var po = 0; po < polygonCoords.length; po++) {
+                                        if (polygonCoords[po].PolygonNo + "start" == path[p]) {
+                                            ar2 = [];
+                                            speed = speed + polygonCoords[po].Avg_speed;
+                                            if (p > 0) {
+                                                var dist = findDistance(polygonCoords[po].Coordinates.Start.x, polygonCoords[po].Coordinates.Start.y, point_coords_x, point_coords_y, "N");
+                                                total_dist = total_dist + dist;
+                                            }
+                                            var point_coords_x = polygonCoords[po].Coordinates.Start.x;
+                                            var point_coords_y = polygonCoords[po].Coordinates.Start.y;
+                                            ar2.push(polygonCoords[po].Coordinates.Start.x);
+                                            ar2.push(polygonCoords[po].Coordinates.Start.y);
+                                            coordArray.push(ar2);
+                                        }
+                                        else if (polygonCoords[po].PolygonNo + "end" == path[p]) {
+                                            ar2 = [];
+                                            speed = speed + polygonCoords[po].Avg_speed;
+                                            if (p > 0) {
+                                                var dist = findDistance(polygonCoords[po].Coordinates.End.x, polygonCoords[po].Coordinates.End.y, point_coords_x, point_coords_y, "N");
+                                                total_dist = total_dist + dist;
+                                            }
+                                            var point_coords_x = polygonCoords[po].Coordinates.End.x;
+                                            var point_coords_y = polygonCoords[po].Coordinates.End.y;
+                                            ar2.push(polygonCoords[po].Coordinates.End.x);
+                                            ar2.push(polygonCoords[po].Coordinates.End.y);
+                                            coordArray.push(ar2);
+                                        }
+                                    }
+
+                                }
+                                total_dist = total_dist + newdist + newEnddist
+                                total_dist = (Math.round(total_dist * 100) / 100).toFixed(2);
+                                /* Εύρεση μέσης ταχύτητας προσθέτοντας το σύνολο της μέση ταχύτητα απο σημείο σε σημείο και διαιρόντας με το σύνολο των σημείων -1 */
+                                average_speed = speed / (path.length - 1);
+                                average_speed = (Math.round(average_speed * 100) / 100).toFixed(2);
+                                travel_time = total_dist / average_speed;
+                                travel_time = (Math.round(travel_time * 100) / 100).toFixed(2);
+                                var drawpath;
+                                /* Απαλοιφή πρηγούμενης διαδρομής σε περίπτωση που υπάρχει */
+                                for (i in mymap._layers) {
+                                    if (mymap._layers[i]._path != undefined) {
+                                        try {
+                                            mymap.removeLayer(mymap._layers[i]);
+                                        }
+                                        catch (e) {
+                                            console.log("problem with " + e + mymap._layers[i]);
+                                        }
+                                    }
+                                }
+                                /* Ευθεία γραμμή απο το λιμάνι αφετηρίας στο κοντινότερο σημείο πολύγωνου */
+                                drawpathStart = L.polyline(connectStart);
+                                drawpathStart.addTo(mymap);
+                                /* Ευθεία γραμμή με το shortest path */
+                                drawpath = L.polyline(coordArray);
+                                drawpath.addTo(mymap);
+                                /* Ευθεία γραμμή απο το λιμάνι προορισμού στο κοντινότερο σημείο πολύγωνου */
+                                drawpathEnd = L.polyline(connectEnd);
+                                drawpathEnd.addTo(mymap);
+                            }
+                        }
+                        function PriorityQueue() {
+                            this._nodes = [];
+                            this.enqueue = function (priority, key) {
+                                this._nodes.push({ key: key, priority: priority });
+                                this.sort();
+                            };
+                            this.dequeue = function () {
+                                return this._nodes.shift().key;
+                            };
+                            this.sort = function () {
+                                this._nodes.sort(function (a, b) {
+                                    return a.priority - b.priority;
+
+                                });
+                            };
+                            this.isEmpty = function () {
+                                return !this._nodes.length;
+                            };
+                        }
+
+                        /**
+                         * Pathfinding starts here
+                         */
+                        function Graph() {
+                            var INFINITY = 1 / 0;
+                            this.vertices = {};
+
+                            this.addVertex = function (name, edges) {
+                                this.vertices[name] = edges;
+                            };
+
+                            this.shortestPath = function (start, finish) {
+                                var nodes = new PriorityQueue(),
+                                    distances = {},
+                                    previous = {},
+                                    path = [],
+                                    smallest, vertex, neighbor, alt;
+                                for (vertex in this.vertices) {
+                                    if (vertex === start) {
+                                        distances[vertex] = 0;
+                                        nodes.enqueue(0, vertex);
+                                    }
+                                    else {
+                                        distances[vertex] = INFINITY;
+                                        nodes.enqueue(INFINITY, vertex);
+                                    }
+                                    previous[vertex] = null;
+                                }
+                                while (!nodes.isEmpty()) {
+                                    smallest = nodes.dequeue();
+                                    if (smallest === finish) {
+                                        path = [];
+                                        while (previous[smallest]) {
+                                            path.push(smallest);
+                                            smallest = previous[smallest];
+                                        }
+
+                                        break;
+                                    }
+                                    if (!smallest || distances[smallest] === INFINITY) {
+                                        continue;
+                                    }
+                                    for (neighbor in this.vertices[smallest]) {
+                                        alt = distances[smallest] + this.vertices[smallest][neighbor];
+                                        if (alt < distances[neighbor]) {
+                                            distances[neighbor] = alt;
+                                            previous[neighbor] = smallest;
+                                            nodes.enqueue(alt, neighbor);
+                                        }
+                                    }
+                                }
+                                return path;
+                            }
+                        }
+                    }
+                }
+            };
+            var testlength = 0
+            function findDistance(lat1, lon1, lat2, lon2, unit) {
+                if ((lat1 == lat2) && (lon1 == lon2)) {
+                    return 0;
+                }
+                else {
+                    var radlat1 = Math.PI * lat1 / 180;
+                    var radlat2 = Math.PI * lat2 / 180;
+                    var theta = lon1 - lon2;
+                    var radtheta = Math.PI * theta / 180;
+                    var dist = Math.sin(radlat1) * Math.sin(radlat2) + Math.cos(radlat1) * Math.cos(radlat2) * Math.cos(radtheta);
+                    if (dist > 1) {
+                        dist = 1;
+                    }
+                    dist = Math.acos(dist);
+                    dist = dist * 180 / Math.PI;
+                    dist = dist * 60 * 1.1515;
+                    if (unit == "K") { dist = dist * 1.609344 }
+                    if (unit == "N") { dist = dist * 0.8684 }
+                    return dist;
+                }
+            }
+            function findCoordDistance() {
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", 'http://localhost:3000/api/polygons/', true);
+                xhr.send();
+                xhr.onload = function () {
+                    if (this.status == 200) {
+                        var allpolygons = JSON.parse(this.responseText);
+                        for (var i = 0; i < allpolygons.length; i++) {
+                            var startx = allpolygons[i].Coordinates.Start.x;
+                            var starty = allpolygons[i].Coordinates.Start.y;
+                            var endx = allpolygons[i].Coordinates.End.x;
+                            var endy = allpolygons[i].Coordinates.End.y;
+                            var distanceArray = [];
+                            testlength = testlength + 1
+                            var distance = findDistance(startx, starty, endx, endy, "N")
+                            for (var j = 0; j < allpolygons.length; j++) {
+                                var newstartx = allpolygons[j].Coordinates.Start.x;
+                                var newstarty = allpolygons[j].Coordinates.Start.y;
+                                var newendx = allpolygons[j].Coordinates.End.x;
+                                var newendy = allpolygons[j].Coordinates.End.y;
+                                var distanceStart = findDistance(endx, endy, newstartx, newstarty, "N")
+                                //var distanceEnd = findDistance(startx, starty, newendx, newendy, "N")
+                                /* Αποτελέσματα για αποστάσεις μικρότερες των 10 Ναυτικών μιλίων απο το σημείο αρχής */
+                                /*if (distanceStart < 10 && allpolygons[j].PolygonNo != allpolygons[i].PolygonNo ){
+                                    distanceArray.push("'" + allpolygons[j].PolygonNo + "start'" + ":" + distanceStart + "");
+                                } */
+                                /* Αποτελέσματα για αποστάσεις μικρότερες των 10 ναυτικών μιλίων απο το σημείο τέλους */
+                                if (distanceEnd < 10 && allpolygons[j].PolygonNo != allpolygons[i].PolygonNo) {
+                                    distanceArray.push("'" + allpolygons[j].PolygonNo + "end'" + ":" + distanceEnd + "");
+                                }
+                                /* Αποτελέσματα για αποστάσεις μικρότερες των 70 ναυτικών μιλίων απο το σημείο αρχής */
+                                /*if (distanceStart < 70 && allpolygons[j].PolygonNo != allpolygons[i].PolygonNo ){
+                                    distanceArray.push("'" + allpolygons[j].PolygonNo + "end'" + ":" + distanceStart + "");
+                                } */
+                                /* Αποτελέσματα για αποστάσεις μικρότερες των 70 ναυτικών μιλίων απο το σημείο τέλους */
+                                /*if (distanceEnd < 70 && allpolygons[j].PolygonNo != allpolygons[i].PolygonNo ){
+                                    distanceArray.push("'" + allpolygons[j].PolygonNo + "end'" + ":" + distanceEnd + "");
+                                } */
+                            }
+                            /* Αποτύπωση αποτελεσμάτων για endpoints σε JSON format */
+                            console.log("{'PointName':'" + allpolygons[i].PolygonNo + "end','distances':{'" + allpolygons[i].PolygonNo + "start':" + distance + "," + distanceArray + "}},")
+                        }
+                    }
+                }
+            };
+            function findCoordDistanceSpd() {
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", 'http://localhost:3000/api/polygons/', true);
+                xhr.send();
+                xhr.onload = function () {
+                    if (this.status == 200) {
+                        var allpolygons = JSON.parse(this.responseText);
+                        for (var i = 0; i < allpolygons.length; i++) {
+                            var startx = allpolygons[i].Coordinates.Start.x;
+                            var starty = allpolygons[i].Coordinates.Start.y;
+                            var endx = allpolygons[i].Coordinates.End.x;
+                            var endy = allpolygons[i].Coordinates.End.y;
+                            var speedi = allpolygons[i].Avg_speed;
+                            var distanceArray = [];
+                            testlength = testlength + 1
+                            var distance = findDistance(startx, starty, endx, endy, "N");
+                            var time = distance / speedi;
+                            for (var j = 0; j < allpolygons.length; j++) {
+                                var newstartx = allpolygons[j].Coordinates.Start.x;
+                                var newstarty = allpolygons[j].Coordinates.Start.y;
+                                var newendx = allpolygons[j].Coordinates.End.x;
+                                var newendy = allpolygons[j].Coordinates.End.y;
+                                var speedj = allpolygons[j].Avg_speed;
+                                var avgspeed = (speedi + speedj) / 2;
+                                /* Εύρεση χρόνο διάσχισης για τα σημεία αρχής πολύγωνου */
+                                var distanceStart = findDistance(endx, endy, newstartx, newstarty, "N")
+                                var timeStart = distanceStart / avgspeed;
+                                var timestartround = (Math.round(timeStart * 100) / 100).toFixed(2);
+                                /* Εύρεση χρόνο διάσχισης για τα σημεία τέλους πολύγωνου */
+                                /*var distanceEnd = findDistance(startx, starty, newendx, newendy, "N")
+                                var timeEnd = distanceEnd/avgspeed;
+                                var timeendround = (Math.round(timeEnd * 100) / 100).toFixed(2);*/
+                                /* Αποτελέσματα για αποστάσεις μικρότερες των 10 ναυτικών μιλίων απο το σημείο αρχής με βαση το χρόνο διάσχισης */
+                                if (distanceStart < 10 && allpolygons[j].PolygonNo != allpolygons[i].PolygonNo) {
+                                    distanceArray.push("'" + allpolygons[j].PolygonNo + "start'" + ":" + timestartround + "");
+                                }
+                                /* Αποτελέσματα για αποστάσεις μικρότερες των 10 ναυτικών μιλίων απο το σημείο τέλους με βαση το χρόνο διάσχισης */
+                                /*if (distanceEnd < 70 && allpolygons[j].PolygonNo != allpolygons[i].PolygonNo ){
+                                    distanceArray.push("'" + allpolygons[j].PolygonNo + "end'" + ":" + timeendround + "");
+                                }*/
+                            }
+                            console.log("{'PointName':'" + allpolygons[i].PolygonNo + "end','distances':{'" + allpolygons[i].PolygonNo + "start':" + time + "," + distanceArray + "}},")
+                        }
+                    }
+                }
+            };
+            function showResults() {
+                var x = document.getElementById("Results");
+                document.getElementById('distance').innerHTML += total_dist + ' Nm';
+                document.getElementById('avgspeed').innerHTML += average_speed + ' Nm/H';
+                document.getElementById('time').innerHTML += travel_time + ' Hours';
+                x.style.display = "block";
+                document.getElementById("loader").style.display = "none";
+            }
+            function set_default_values() {
+                var x = document.getElementById("Results");
+                x.style.display = "none";
+                document.getElementById('distance').innerHTML = 'Distance: ';
+                document.getElementById('avgspeed').innerHTML = 'Average Speed: ';
+                document.getElementById('time').innerHTML = 'Travel Time: ';
+            }
+            function calc() {
+                document.getElementById("loader").style.display = "block";
+                set_default_values();
+                findNewShortestPath();
+                setTimeout(showResults, 5000);
+                
+            }
+        </script>
+
+    </div>
+    <div class="col-md-6">
+        <div id="Title">VESSEL COURSE OPTIMIZATION</div>
+        <div class="sub-heading">
+            <div id="Title2">select departure and destination <br />port to find the best route</div>
+        </div>
+    </div>
+    <div id="loader"></div>
+    <div class="row align-items-center justify-content-center">
+        <div class="col-md-6"></div>
+        <div class="col-md-1"></div>
+        <div class="col-md-5 relative align-self-center">
+            <div id="Title3">Find Best Route</div>
+            <div class="portA">
+                <input id="myInput" type="text" list="portList" name="start" onkeyup="searchStartPort()"
+                    oninput="putStartPin()" placeholder="Start Port" tabindex="1" autocomplete="off"
+                    class="auto-style1" />
+                <datalist id="portList">
+                    <option id="StartportValue1" value="" />
+                    <option id="StartportValue2" value="" />
+                    <option id="StartportValue3" value="" />
+                    <option id="StartportValue4" value="" />
+                    <option id="StartportValue5" value="" />
+                    <option id="StartportValue6" value="" />
+                    <option id="StartportValue7" value="" />
+                    <option id="StartportValue8" value="" />
+                    <option id="StartportValue9" value="" />
+                    <option id="StartportValue10" value="" />
+                </datalist>
+            </div>
+            <div class="portB">
+                <input id="myInputB" type="text" list="portList2" name="end" onkeyup="searchEndPort()"
+                    oninput="putEndPin()" placeholder="Destination Port" tabindex="2" autocomplete="off"
+                    class="auto-style1" />
+                <datalist id="portList2">
+                    <option id="EndportValue1" value="" />
+                    <option id="EndportValue2" value="" />
+                    <option id="EndportValue3" value="" />
+                    <option id="EndportValue4" value="" />
+                    <option id="EndportValue5" value="" />
+                    <option id="EndportValue6" value="" />
+                    <option id="EndportValue7" value="" />
+                    <option id="EndportValue8" value="" />
+                    <option id="EndportValue9" value="" />
+                    <option id="EndportValue10" value="" />
+                </datalist>
+            </div>
+            <blockquote>
+                <p>start typing to see the suggestions</p>
+            </blockquote>
+            <button type="button" class="myButton" id="calculate" onclick="calc()">Calculate</button>
+        </div>
+        <div id="Results">
+            <p><label id="distance"></label></p>
+            <p><label id="avgspeed"></label></p>
+            <p><label id="time"></label></p>
+        </div>
+    </div>
+
+    <!-- #EndEditable -->
+
+    <script src="https://code.jquery.com/jquery-3.4.1.slim.min.js"
+        integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"
+        integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo"
+        crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
+        integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
+        crossorigin="anonymous"></script>
+</body>
+<!-- #EndTemplate -->
+
+</html>
